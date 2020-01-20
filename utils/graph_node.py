@@ -88,20 +88,22 @@ class AtenNode(Node):
     def to_python(self, env: set, src=False):
         _, op_name = self.op.split('::')
         func = ''
+        camel_case_name = to_camel_cases(op_name)
         if hasattr(torch, op_name):
             func = f'torch.{op_name}' if src else getattr(torch, op_name)
         elif hasattr(torch.nn, camel_case_name):
-            camel_case_name = to_camel_cases(op_name)
             func = f'torch.nn.{op_name}' if src else getattr(torch.nn, camel_case_name)
+        elif hasattr(torch, op_name.replace('_', '')):
+            func = f'torch.{op_name.replace("_", "")}'
         else:
             raise Exception(f'Unknown operator: {op_name}')
         
         if src:
             input_vars = [to_pyid(x) for x in self.inputs]
-            if not input_vars or all((i in env for i in input_vars)):
+            out_var = to_pyid(self.outputs[0])
+            env.add(out_var)    # SSA
+            if all((i in env for i in input_vars)):
                 func_call = make_func_call(func, *input_vars)
-                out_var = to_pyid(self.outputs[0])
-                env.add(out_var)    # SSA
                 return f'{out_var} = {func_call}'
             else:
                 raise Exception(f'{", ".join([str(x) for x in filter(lambda x: x not in env, input_vars)])}' \

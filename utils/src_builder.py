@@ -7,11 +7,11 @@ from .utils import traverse_graph
 def to_python_src(start: Node, graph: dict):
     env = set()
     result = \
-        '''
-        import torch
-        import torchvison
-        {}
-        '''
+'''
+import torch
+import torchvison
+{}
+'''
     lines = []
     nodes = list(graph.values())
     nodes.sort(key=lambda node: node.outputs[0])

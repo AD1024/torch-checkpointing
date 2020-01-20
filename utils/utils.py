@@ -2,8 +2,11 @@ from functools import reduce
 
 
 def to_camel_cases(x):
+    if not x:
+        return ''
+    if '_' not in x:
+        return x[0].upper() + x[1:]
     xs = x.split('_')
-    print(x)
     if len(xs) > 1:
         hd, *tail = xs
         return to_camel_cases(hd) \
