@@ -12,7 +12,7 @@ Value = namedtuple('Value', ['type', 'value', 'sizes'])
 def get_shape(node) -> dict:
     '''
         Get the shape (Tensor) of a node's outputs
-        this is designed for prim:: scope
+        this is designed for aten:: scope
     '''
     outputs = dict()
     for o in node.outputs():
@@ -23,14 +23,14 @@ def get_shape(node) -> dict:
 def get_value(node) -> dict:
     '''
         Get the value (type and shape) of a node's outputs
-        this is designed for aten:: scope
+        this is designed for prim:: scope
     '''
     outputs = dict()
     for o in node.outputs():
         typeIs = o.type().str()
         value  = o.toIValue()
         outputs[o.unique()] = Value(type=typeIs, value=value,\
-                                    sizes=len(list(node.outputs())) if typeIs.startswith('List') else 1)
+                                    sizes=len(list(node.outputs())) if typeIs.endswith('[]') else 1)
     return outputs
 
 def create_name(node):
