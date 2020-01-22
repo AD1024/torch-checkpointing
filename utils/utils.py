@@ -20,7 +20,7 @@ def to_pyid(name):
     return f'var_{name}'
 
 def make_func_call(func, *params):
-    return f'{func}({", ".join(params)})'
+    return f'{func}({", ".join(map(str, params))})'
 
 def traverse_graph(start, graph: dict, func=lambda _: None):
     queue = [start]

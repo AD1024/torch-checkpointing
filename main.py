@@ -1,5 +1,9 @@
 from utils import checkpointing, src_builder
+import torch
+import torchvision
 
 if __name__ == '__main__':
-    output = checkpointing.auto_checkpoint(checkpointing.torchvision.models.resnet18(), checkpointing.torch.zeros([64, 3, 7, 7]), 1638400)
-    print(src_builder.to_python_src(output.start, output.graph))
+    model_resnet50  = torchvision.models.resnet50()
+    inputs_resnet50 = torch.zeros([1, 3, 224, 224])
+    output = checkpointing.auto_checkpoint(model_resnet50, inputs_resnet50, 1638400, verbose=True)
+    print(src_builder.to_python_src(output.params, output.start, output.graph))
