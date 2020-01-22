@@ -121,7 +121,7 @@ def build_src(name: str, forward_args: str, class_defined: list, forward_pass: l
     '''.format(name, "\n    ".join(map(lambda x: f'{x}', class_defined)),\
                                foward_template.format(forward_args, ("\n" + 8 * " ").join(forward_pass)))
 
-def to_python_src(params: Node, start: Node, graph: dict, checkpoints: list):
+def to_python_src(module_name: str, params: Node, start: Node, graph: dict, checkpoints: list):
     '''
         Compile the computation graph to Python source code
 
@@ -139,5 +139,5 @@ def to_python_src(params: Node, start: Node, graph: dict, checkpoints: list):
         if new_line:
             lines.append(new_line)
     result_checkpoint = checkpointing(lines, checkpoints, lines[-1].output_var)
-    # return result.format(", ".join((to_pyid(x) for x in params.outputs)), "\n    ".join(()))
-    return build_src('TestModule', ", ".join((to_pyid(x) for x in params.outputs)), result_checkpoint['class_declared'], result_checkpoint['forward_local'])
+    return build_src(module_name, ", ".join((to_pyid(x) for x in params.outputs)),\
+                     result_checkpoint['class_declared'], result_checkpoint['forward_local'])
