@@ -5,6 +5,7 @@ from .graph_node import *
 from functools import reduce
 from collections import namedtuple
 from torch import nn
+from .utils import traverse_graph
 
 Shape = namedtuple('Shape', ['type', 'sizes'])
 Value = namedtuple('Value', ['type', 'value', 'sizes'])
@@ -109,23 +110,22 @@ def checkpointing_with_budget(start: Node, graph: dict, budget: int, params: Nod
                         `inter_stage`:  "approximate cost to store inter-stage feature map"
                         `max_usage`:    maximum substage memory cost
                         `graph`:        checkpointed computation graph 
+                        `checkpoints`:  a list of node id that are marked as checkpoints
     '''
     if (verbose):
         print(f'Checkpointing with {budget} bytes budget')
     checkpointed_graph = graph.copy()
+    checkpoints = []
     temp, x, y = 0, 0, 0
-    queue = [start]
-    in_queue = set({start.id})
     # Reference:
     # Tianqi Chen, Bing Xu, Chiyuan Zhang and Carlos Guestrin.
     # "Training Deep Nets with Sublinear Memory Cost".
     # Apr. 22, 2016
     # https://arxiv.org/abs/1604.06174
-    while queue:
-        first, *queue = queue
+    def decide_checkpoint(first):
+        nonlocal temp, x, y
         output_size = first.get_output_size()
         temp += output_size
-        in_queue.remove(first.id)
         if temp > budget:
             if verbose:
                 print(f'Usage: {temp} -- Checkpoint on {first.id}')
@@ -133,16 +133,16 @@ def checkpointing_with_budget(start: Node, graph: dict, budget: int, params: Nod
             y = max(temp, y)
             temp = 0
             checkpointed_graph[first.id].checkpoint = True
-        for v, _ in first.adjacent_nodes(graph):
-            if v.id not in in_queue:
-                in_queue.add(v.id)
-                queue.append(v)
-    Result = namedtuple('Result', ['params', 'start', 'inter_stage', 'max_usage', 'graph'])
+            # Graph traversal ensures topological order
+            checkpoints.append(first.id)
+    traverse_graph(start, graph, decide_checkpoint)
+    Result = namedtuple('Result', ['params', 'start', 'inter_stage', 'max_usage', 'graph', 'checkpoints'])
     return Result(params=params,
                   start=checkpointed_graph[start.id],
                   inter_stage=x,
                   max_usage=y,
-                  graph=checkpointed_graph)
+                  graph=checkpointed_graph,
+                  checkpoints=checkpoints)
 
 def auto_checkpoint(model, inp, budget, verbose=False):
     '''

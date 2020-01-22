@@ -1,5 +1,6 @@
 import torch
 import torchvision
+from collections import namedtuple
 from .utils import to_pyid, make_func_call, to_camel_cases
 from functools import reduce
 
@@ -15,6 +16,10 @@ calc_dict = {'Long' : lambda size: SIZE_LONG  * size,
              'int'  : lambda size: SIZE_INT * size,
              'List[Int]': lambda size: SIZE_INT * size,
              'int[]'    : lambda size: SIZE_INT * size}
+
+# Store the function / operator and its argument to
+# convert the procedure to a checkpointed procedure
+ParsedCode = namedtuple('ParsedCode', ['code', 'func', 'args', 'node_id', 'output_var'])
 
 class Node:
     '''
@@ -56,8 +61,13 @@ class Node:
                 inline  whether to inline lists and constants
             
             :returns:
-                A Python Object of current Node (in-progress) or a corresponding
-                Python Source Code
+                A Python Object of current Node (in-progress) or 
+                A ParsedCode object:
+                    `code`:         the actual source code
+                    `func`:         function called in current node
+                    `args`:         parameters to `func` (maybe inlined)
+                    `node_id`:      id of the node
+                    `output_var`:   variable name of the output of the node
         '''
         raise NotImplementedError()
 
@@ -79,14 +89,18 @@ class PrimNode(Node):
     def to_python(self, ctx: dict, src=False, inline=True):
         _, op_name = self.op.split('::')
         out_var = to_pyid(self.outputs[0])  # SSA
+        # Update variable name
         ctx.update({ self.outputs[0] : out_var })
         if op_name == 'Constant':
+            output = self.value[self.outputs[0]].value
             if not src:
-                return self.value[self.outputs[0]]
+                return output
             if inline:
-                ctx[out_var] = self.value[self.outputs[0]].value
+                # Update constant value
+                ctx[out_var] = output
                 return None
-            return f'{out_var} = {self.value[self.outputs[0]].value}'
+            return ParsedCode(code=f'{out_var} = {output}', func=None,\
+                              args=output, node_id=self.id, output_var=out_var)
         elif op_name == 'ListConstruct':
             input_vars = self.inputs
             if not src:
@@ -97,7 +111,10 @@ class PrimNode(Node):
                 if inline:
                     ctx[out_var] = list(ctx.get(ctx[i], ctx[i]) for i in input_vars)
                     return None
-                return f'{out_var} = [{", ".join([ctx[i] for i in input_vars])}]'
+                inputs = [ctx[i] for i in input_vars]
+                return ParsedCode(code=f'{out_var} = [{", ".join(inputs)}]',\
+                                  func='list',\
+                                  args=inputs, node_id=self.id, output_var=out_var)
             else:
                 raise Exception(f'{", ".join((x for x in filter(lambda i: ctx.get(i, None) is None, input_vars)))}' +\
                                 f'are referred in prim::ListConstruct ({self.outputs[0]}) but not found in ctx')
@@ -141,10 +158,12 @@ class AtenNode(Node):
             ctx.update({ self.outputs[0] : out_var })
             if all((ctx.get(i, None) is not None for i in input_vars)):
                 if inline:
-                    func_call = make_func_call(func, *[ctx.get(ctx.get(x), ctx.get(x)) for x in input_vars])
+                    func_args = [ctx.get(ctx.get(x), ctx.get(x)) for x in input_vars]
                 else:
-                    func_call = make_func_call(func, *[ctx.get(ctx.get(x)) for x in input_vars])
-                return f'{out_var} = {func_call}'
+                    func_args = [ctx.get(ctx.get(x)) for x in input_vars]
+                func_call = make_func_call(func, *func_args)
+                return ParsedCode(code=f'{out_var} = {func_call}', func=func, args=func_args,\
+                                  node_id=self.id, output_var=out_var)
             else:
                 raise Exception(f'{", ".join((str(x) for x in filter(lambda x: ctx.get(x, None) is None, input_vars)))}' \
                                 + f' are referred in {self.id} ({self.outputs[0]}) but not found in ctx')

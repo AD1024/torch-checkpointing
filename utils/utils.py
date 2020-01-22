@@ -1,6 +1,14 @@
 from functools import reduce
 
 
+def validate_indice(func):
+    def wrapper(start, end, xs, *args):
+        assert start <= end
+        assert start >= 0 and start < len(xs)
+        assert end >= 0 and end < len(xs)
+        return func(start, end, xs, *args)
+    return wrapper
+
 def to_camel_cases(x):
     if not x:
         return ''
