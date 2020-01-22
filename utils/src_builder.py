@@ -25,6 +25,8 @@ def forward({}):
     nodes = list(graph.values())
     nodes.sort(key=lambda node: node.outputs[0])
     for n in nodes:
-        lines.append(n.to_python(env, src=True))
+        new_line = n.to_python(env, src=True, inline=True)
+        if new_line:
+            lines.append(new_line)
     return result.format(", ".join((to_pyid(x) for x in params.outputs)), "\n    ".join(lines))
     

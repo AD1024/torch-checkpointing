@@ -45,7 +45,7 @@ class Node:
         '''
         raise NotImplementedError()
     
-    def to_python(self, ctx: dict, src=False):
+    def to_python(self, ctx: dict, src=False, inline=True):
         '''
             Parse to Python Object / Source Code
             Note: Parsing to Python src will modify (add new variables) the context (env)
@@ -53,6 +53,7 @@ class Node:
             :params:
                 ctx     Context
                 src     Pass True to parse to python source code
+                inline  whether to inline lists and constants
             
             :returns:
                 A Python Object of current Node (in-progress) or a corresponding
@@ -75,13 +76,16 @@ class PrimNode(Node):
         self.output_size = sum([calc_dict[value.type](value.sizes) for value in self.value.values()])
         return self.output_size
     
-    def to_python(self, ctx: dict, src=False):
+    def to_python(self, ctx: dict, src=False, inline=True):
         _, op_name = self.op.split('::')
         out_var = to_pyid(self.outputs[0])  # SSA
         ctx.update({ self.outputs[0] : out_var })
         if op_name == 'Constant':
             if not src:
                 return self.value[self.outputs[0]]
+            if inline:
+                ctx[out_var] = self.value[self.outputs[0]].value
+                return None
             return f'{out_var} = {self.value[self.outputs[0]].value}'
         elif op_name == 'ListConstruct':
             input_vars = self.inputs
@@ -90,6 +94,9 @@ class PrimNode(Node):
             # Ensures the identifiers referred in the current call
             # is defined in the context
             if all((ctx.get(i, None) is not None for i in input_vars)):
+                if inline:
+                    ctx[out_var] = list(ctx.get(ctx[i], ctx[i]) for i in input_vars)
+                    return None
                 return f'{out_var} = [{", ".join([ctx[i] for i in input_vars])}]'
             else:
                 raise Exception(f'{", ".join((x for x in filter(lambda i: ctx.get(i, None) is None, input_vars)))}' +\
@@ -112,7 +119,7 @@ class AtenNode(Node):
                                                         for shape in self.shape.values()])
         return self.output_size
     
-    def to_python(self, ctx: dict, src=False):
+    def to_python(self, ctx: dict, src=False, inline=True):
         _, op_name = self.op.split('::')
         func = ''
         camel_case_name = to_camel_cases(op_name)
@@ -133,7 +140,10 @@ class AtenNode(Node):
             out_var = to_pyid(self.outputs[0])  # SSA
             ctx.update({ self.outputs[0] : out_var })
             if all((ctx.get(i, None) is not None for i in input_vars)):
-                func_call = make_func_call(func, *[ctx.get(x, to_pyid(x)) for x in input_vars])
+                if inline:
+                    func_call = make_func_call(func, *[ctx.get(ctx.get(x), ctx.get(x)) for x in input_vars])
+                else:
+                    func_call = make_func_call(func, *[ctx.get(ctx.get(x)) for x in input_vars])
                 return f'{out_var} = {func_call}'
             else:
                 raise Exception(f'{", ".join((str(x) for x in filter(lambda x: ctx.get(x, None) is None, input_vars)))}' \
