@@ -104,7 +104,7 @@ def checkpointing_with_budget(start: Node, graph: dict, budget: int, params: Nod
             verbose Enable debug output
         
         :returns:
-            result  A namedtuple that has 3 fields:
+            result  A namedtuple that has following fields:
                         `params`:       the parameters that graph takes
                         `start`:        entry point
                         `inter_stage`:  "approximate cost to store inter-stage feature map"

@@ -14,7 +14,6 @@ calc_dict = {'Long' : lambda size: SIZE_LONG  * size,
              'Float': lambda size: SIZE_FLOAT * size, 
              'None' : lambda size: SIZE_NONE * size, 
              'int'  : lambda size: SIZE_INT * size,
-             'List[Int]': lambda size: SIZE_INT * size,
              'int[]'    : lambda size: SIZE_INT * size}
 
 # Store the function / operator and its argument to

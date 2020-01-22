@@ -37,12 +37,10 @@ def free_variables(start: int, end: int, parsed_code: list, local_vars=None) -> 
         local_ref = local_vars
     else:
         local_ref = local_variables(start, end, parsed_code)
-    free_variables  = set()
+    free_vars  = set()
     for i in range(start, end + 1):
-        for param in parsed_code[i].args:
-            if isinstance(param, str) and param not in local_ref:
-                free_variables.add(param)
-    return free_variables
+        free_vars = free_vars.union(set(filter(lambda x: isinstance(x, str) and x not in local_ref, parsed_code[i].args)))
+    return free_vars
 
 def checkpointing(parsed_code: list, checkpoints: list, output_var: str) -> str:
     '''
@@ -76,6 +74,7 @@ def checkpointing(parsed_code: list, checkpoints: list, output_var: str) -> str:
     if head >= 0:
         local_refs = local_variables(head, tail, parsed_code)
     else:
+        # Not a valid plan
         return {
             'class_declared': [],
             'forward_local' : [x.code for x in parsed_code]
@@ -101,7 +100,7 @@ def checkpointing(parsed_code: list, checkpoints: list, output_var: str) -> str:
             args_after_lift = free_variables(head + 1, tail - 1, parsed_code)
             body.append(f'return {", ".join(referred)}')  # return the variables that are referred later
             declared_code.append(make_function(func_name, args_after_lift, body))
-            local_code = cons(f'{", ".join(referred)} = self.{make_torch_checkpoint_call(func_name, args_after_lift)}', local_code)
+            local_code = cons(f'{", ".join(referred)} = {make_torch_checkpoint_call(func_name, args_after_lift)}', local_code)
             local_refs = local_refs.union(args_after_lift)
         tail = head
     local_code.append(f'return {output_var}')
@@ -126,9 +125,10 @@ def to_python_src(module_name: str, params: Node, start: Node, graph: dict, chec
         Compile the computation graph to Python source code
 
         :params:
-            params: parameters (input) of the graph
-            start : the entry node of the graph
-            graph : a string->Node map represents the nodes in the graph
+            params:         parameters (input) of the graph
+            start :         the entry node of the graph
+            graph :         a string->Node map represents the nodes in the graph
+            checkpoints:    node id that are marked as checkpoints
     '''
     env = dict(((k, v) for k, v in zip(params.outputs, map(to_pyid, params.outputs))))
     lines = []

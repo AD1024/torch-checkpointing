@@ -2,6 +2,10 @@ from functools import reduce
 
 
 def validate_indice(func):
+    '''
+        Validate indices for functions that
+        accepts start, end and a list to operate
+    '''
     def wrapper(start, end, xs, *args):
         assert start <= end
         assert start >= 0 and start < len(xs)
@@ -10,6 +14,9 @@ def validate_indice(func):
     return wrapper
 
 def to_camel_cases(x):
+    '''
+        Convert a PEP8 style variable name to camel case style
+    '''
     if not x:
         return ''
     if '_' not in x:
@@ -31,6 +38,10 @@ def make_func_call(func, *params):
     return f'{func}({", ".join(map(str, params))})'
 
 def traverse_graph(start, graph: dict, func=lambda _: None):
+    '''
+        Traverse a graph and execute provided
+        operation on current nodes.
+    '''
     queue = [start]
     in_queue = set({start.id})
     while queue:
