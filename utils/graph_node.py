@@ -145,7 +145,7 @@ class AtenNode(Node):
         if hasattr(torch, op_name):
             func = f'torch.{op_name}' if src else getattr(torch, op_name)
         elif hasattr(torch.nn, camel_case_name):
-            func = f'torch.nn.{op_name}' if src else getattr(torch.nn, camel_case_name)
+            func = f'torch.nn.{camel_case_name}' if src else getattr(torch.nn, camel_case_name)
         elif hasattr(torch, op_name.replace('_', '')):
             func = f'torch.{op_name.replace("_", "")}'
         else:

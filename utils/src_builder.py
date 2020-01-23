@@ -1,5 +1,6 @@
 import torch
 import torch.jit
+import random
 from .graph_node import Node
 from .utils import to_pyid, validate_indice
 
@@ -110,15 +111,42 @@ def checkpointing(parsed_code: list, checkpoints: list, output_var: str) -> str:
     }
 
 
-def build_src(name: str, forward_args: str, class_defined: list, forward_pass: list):
-    foward_template = '''def forward({}):
+def weight_gen(v_to_shape):
+    shape = v_to_shape[1]
+    weight_type = shape.type
+    sizes = shape.sizes
+    return {
+        'Float': lambda sizes: f'torch.rand({sizes})',
+        'Long':  lambda     _: f'random.randint(0, 65536)',
+    }.get(weight_type, lambda x: '0')(sizes)
+
+def build_forward():
+    result = \
+'''def forward(self, inputs):
+        return self.forward_(inputs, *self.weights)
+'''
+    return result
+
+def build_init_weight(param_node):
+    result = \
+'''def __init__(self):
+        self.weights = [{}]
+'''.format(', '.join(map(weight_gen, sorted(param_node.shape.items())[1:])))
+    return result
+
+def build_src(name: str, forward_args: str, param_node, class_defined: list, forward_pass: list):
+    foward_template = '''def forward_(self, {}):
         {}
     '''
-    return '''class {}(torch.nn.Module):
+    return '''import torch\n
+class {}(torch.nn.Module):
     {}
     {}
-    '''.format(name, "\n    ".join(map(lambda x: f'{x}', class_defined)),\
-                               foward_template.format(forward_args, ("\n" + 8 * " ").join(forward_pass)))
+    {}
+    {}'''.format(name, build_init_weight(param_node),\
+                        "\n    ".join(map(lambda x: f'{x}', class_defined)),\
+                        foward_template.format(forward_args, ("\n" + 8 * " ").join(forward_pass)),\
+                        build_forward())
 
 def to_python_src(module_name: str, params: Node, start: Node, graph: dict, checkpoints: list):
     '''
@@ -140,4 +168,4 @@ def to_python_src(module_name: str, params: Node, start: Node, graph: dict, chec
             lines.append(new_line)
     result_checkpoint = checkpointing(lines, checkpoints, lines[-1].output_var)
     return build_src(module_name, ", ".join((to_pyid(x) for x in params.outputs)),\
-                     result_checkpoint['class_declared'], result_checkpoint['forward_local'])
+                     params, result_checkpoint['class_declared'], result_checkpoint['forward_local'])
