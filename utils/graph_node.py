@@ -127,6 +127,10 @@ class AtenNode(Node):
     '''
     def __init__(self, name, op, params, shape, inputs, outputs):
         super().__init__(name, op, params, shape, inputs, outputs)
+        self.func_call_rules = {
+            'torch.nn.AdaptiveAvgPool2d': lambda func_name, *params: f'{func_name}({params[1]})({params[0]})',
+            'torch.addmm'               : lambda func_name, *params: f'{func_name}({", ".join(params[:-2])}, beta={params[-2]}, alpha={params[-1]})',
+        }
 
     def get_output_size(self):
         if self.output_size is not None:
@@ -160,7 +164,7 @@ class AtenNode(Node):
                     func_args = [ctx.get(ctx.get(x), ctx.get(x)) for x in input_vars]
                 else:
                     func_args = [ctx.get(ctx.get(x)) for x in input_vars]
-                func_call = make_func_call(func, *func_args)
+                func_call = self.func_call_rules.get(func, make_func_call)(func, *func_args)
                 return ParsedCode(code=f'{out_var} = {func_call}', func=func, args=func_args,\
                                   node_id=self.id, output_var=out_var)
             else:

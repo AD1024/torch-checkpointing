@@ -13,7 +13,7 @@ def make_function(func_name, params, body):
     return result.format(func_name, ", ".join(params), ("\n" + 8 * " ").join(body))
 
 def make_torch_checkpoint_call(func_name, params):
-    return f'torch.utils.checkpoint.checkpoint({func_name}, args=({", ".join(params)}))'
+    return f'torch.utils.checkpoint.checkpoint({func_name}, {", ".join(params)})'
 
 @validate_indice
 def local_variables(start: int, end: int, parsed_code: list) -> set:
@@ -78,7 +78,7 @@ def checkpointing(parsed_code: list, checkpoints: list, output_var: str) -> str:
         # Not a valid plan
         return {
             'class_declared': [],
-            'forward_local' : [x.code for x in parsed_code]
+            'forward_local' : [x.code for x in parsed_code] + [ f'return {output_var}' ]
         }
     tail = head
     while tail >= 0:
@@ -101,7 +101,7 @@ def checkpointing(parsed_code: list, checkpoints: list, output_var: str) -> str:
             args_after_lift = free_variables(head + 1, tail - 1, parsed_code)
             body.append(f'return {", ".join(referred)}')  # return the variables that are referred later
             declared_code.append(make_function(func_name, args_after_lift, body))
-            local_code = cons(f'{", ".join(referred)} = {make_torch_checkpoint_call(func_name, args_after_lift)}', local_code)
+            local_code = cons(f'{", ".join(referred)} = {make_torch_checkpoint_call(f"self.{func_name}", args_after_lift)}', local_code)
             local_refs = local_refs.union(args_after_lift)
         tail = head
     local_code.append(f'return {output_var}')
@@ -138,7 +138,7 @@ def build_src(name: str, forward_args: str, param_node, class_defined: list, for
     foward_template = '''def forward_(self, {}):
         {}
     '''
-    return '''import torch\n
+    return '''import torch\nimport torch.utils.checkpoint\n
 class {}(torch.nn.Module):
     {}
     {}
