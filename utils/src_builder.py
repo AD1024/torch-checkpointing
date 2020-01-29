@@ -123,7 +123,7 @@ def weight_gen(v_to_shape):
 def build_forward():
     result = \
 '''def forward(self, inputs):
-        return self.forward_(inputs, *self.weights)
+        return self.forward_([ inputs ] + self.weights)
 '''
     return result
 
@@ -134,7 +134,7 @@ def build_init_weight(param_node):
 '''.format(', '.join(map(weight_gen, sorted(param_node.shape.items())[1:])))
     return result
 
-def build_src(name: str, forward_args: str, param_node, class_defined: list, forward_pass: list):
+def build_src(name: str, param_node, class_defined: list, forward_pass: list):
     foward_template = '''def forward_(self, {}):
         {}
     '''
@@ -145,7 +145,7 @@ class {}(torch.nn.Module):
     {}
     {}'''.format(name, build_init_weight(param_node),\
                         "\n    ".join(map(lambda x: f'{x}', class_defined)),\
-                        foward_template.format(forward_args, ("\n" + 8 * " ").join(forward_pass)),\
+                        foward_template.format("input_vars", ("\n" + 8 * " ").join(forward_pass)),\
                         build_forward())
 
 def to_python_src(module_name: str, params: Node, start: Node, graph: dict, checkpoints: list):
@@ -158,7 +158,7 @@ def to_python_src(module_name: str, params: Node, start: Node, graph: dict, chec
             graph :         a string->Node map represents the nodes in the graph
             checkpoints:    node id that are marked as checkpoints
     '''
-    env = dict(((k, v) for k, v in zip(params.outputs, map(to_pyid, params.outputs))))
+    env = dict(((k, v) for k, v in zip(params.outputs, map(lambda name: f'input_vars[{name}]', params.outputs))))
     lines = []
     nodes = list(graph.values())
     nodes.sort(key=lambda node: node.outputs[0])
@@ -167,5 +167,5 @@ def to_python_src(module_name: str, params: Node, start: Node, graph: dict, chec
         if new_line:
             lines.append(new_line)
     result_checkpoint = checkpointing(lines, checkpoints, lines[-1].output_var)
-    return build_src(module_name, ", ".join((to_pyid(x) for x in params.outputs)),\
-                     params, result_checkpoint['class_declared'], result_checkpoint['forward_local'])
+    return build_src(module_name, params, result_checkpoint['class_declared'],\
+                     result_checkpoint['forward_local'])

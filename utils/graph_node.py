@@ -10,11 +10,16 @@ SIZE_INT = 4
 SIZE_LONG  = 8
 SIZE_NONE  = 1
 
-calc_dict = {'Long' : lambda size: SIZE_LONG  * size,
+calc_dict = { # dict for tensors
+             'Long' : lambda size: SIZE_LONG  * size,
              'Float': lambda size: SIZE_FLOAT * size, 
              'None' : lambda size: SIZE_NONE * size, 
+             # dict for prim nodes
              'int'  : lambda size: SIZE_INT * size,
-             'int[]'    : lambda size: SIZE_INT * size}
+             'float': lambda size: SIZE_FLOAT * size,
+             'bool' : lambda size: SIZE_BOOL  * size,
+             'int[]'    : lambda size: SIZE_INT * size,
+             'Tensor[]' : lambda sizes: sum(map(sum, sizes))}
 
 # Store the function / operator and its argument to
 # convert the procedure to a checkpointed procedure

@@ -10,7 +10,7 @@ from .utils import traverse_graph
 Shape = namedtuple('Shape', ['type', 'sizes'])
 Value = namedtuple('Value', ['type', 'value', 'sizes'])
 
-def get_shape(node) -> dict:
+def get_shape(node, tensor_sizes) -> dict:
     '''
         Get the shape (Tensor) of a node's outputs
         this is designed for aten:: scope
@@ -19,9 +19,10 @@ def get_shape(node) -> dict:
     for o in node.outputs():
         typeIs = o.type()
         outputs[o.unique()] = Shape(type=re.match(r'\w+', typeIs.str()).group(), sizes=tuple(typeIs.sizes()))
+        tensor_sizes[o.unique()] = tuple(typeIs.sizes())
     return outputs
 
-def get_value(node) -> dict:
+def get_value(node, tensor_sizes) -> dict:
     '''
         Get the value (type and shape) of a node's outputs
         this is designed for prim:: scope
@@ -30,8 +31,12 @@ def get_value(node) -> dict:
     for o in node.outputs():
         typeIs = o.type().str()
         value  = o.toIValue()
-        outputs[o.unique()] = Value(type=typeIs, value=value,\
-                                    sizes=len(list(node.outputs())) if typeIs.endswith('[]') else 1)
+        if typeIs == 'Tensor[]':
+            sizes = tuple((tensor_sizes[i.unique()] for i in o.inputs()))
+            outputs[o.unique()] = Value(type=typeIs, value=value, sizes=sizes)
+        else:
+            outputs[o.unique()] = Value(type=typeIs, value=value,\
+                                    sizes=len(list(node.inputs())) if typeIs.endswith('[]') else 1)
     return outputs
 
 def create_name(node):
@@ -61,10 +66,11 @@ def parse_to_graph(model, args):
     #       don't have to call trace.graph
     graph, _ = torch.jit._get_trace_graph(model, args)
     # graph = torch.onnx._optimize_trace(trace, torch.onnx.OperatorExportTypes.ONNX)
+    tensor_sizes = {}
     start = None
     parsed_graph  = {}
     param_node    = graph.param_node()
-    param_shape   = get_shape(param_node)
+    param_shape   = get_shape(param_node, tensor_sizes)
     # print(param_shape)
     param_outputs = [o.unique() for o in param_node.outputs()]
     params        = dict(((k, v) for k, v in map(lambda v: (v, param_shape[v]),\
@@ -77,9 +83,9 @@ def parse_to_graph(model, args):
         outputs = [o.unique() for o in node.outputs()]
         inputs  = [i.unique() for i in node.inputs()]
         if op.split('::')[0] == 'prim':
-            graph_node = PrimNode(create_name(node), op, params, get_value(node), inputs, outputs)
+            graph_node = PrimNode(create_name(node), op, params, get_value(node, tensor_sizes), inputs, outputs)
         else:
-            graph_node = AtenNode(create_name(node), op, params, get_shape(node), inputs, outputs)
+            graph_node = AtenNode(create_name(node), op, params, get_shape(node, tensor_sizes), inputs, outputs)
         parsed_graph[graph_node.id] = graph_node
         if start is None:
             start = graph_node
