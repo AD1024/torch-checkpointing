@@ -130,6 +130,7 @@ class AtenNode(Node):
         self.func_call_rules = {
             'torch.nn.AdaptiveAvgPool2d': lambda func_name, *params: f'{func_name}({params[1]})({params[0]})',
             'torch.addmm'               : lambda func_name, *params: f'{func_name}({", ".join(params[:-2])}, beta={params[-2]}, alpha={params[-1]})',
+            'torch.add'                 : lambda func_name, *params: f'{func_name}({", ".join(params[:-1])}, alpha={params[-1]})'
         }
 
     def get_output_size(self):

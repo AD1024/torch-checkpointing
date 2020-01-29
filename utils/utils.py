@@ -52,3 +52,13 @@ def traverse_graph(start, graph: dict, func=lambda _: None):
             if v.id not in in_queue:
                 in_queue.add(v.id)
                 queue.append(v)
+
+def collect_operators(scope: str, start, graph: dict) -> set:
+    result = set()
+    def process_first(first):
+        nonlocal result
+        op_scope, op = first.op.split('::')
+        if op_scope.lower() == scope.lower():
+            result.add(op)
+    traverse_graph(start, graph, process_first)
+    return result

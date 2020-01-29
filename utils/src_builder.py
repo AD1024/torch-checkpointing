@@ -116,8 +116,8 @@ def weight_gen(v_to_shape):
     weight_type = shape.type
     sizes = shape.sizes
     return {
-        'Float': lambda sizes: f'torch.rand({sizes})',
-        'Long':  lambda     _: f'random.randint(0, 65536)',
+        'Float': lambda sizes: f'torch.randn({sizes}) * 1e-7',
+        'Long':  lambda     _: f'random.randint(32, 64)',
     }.get(weight_type, lambda x: '0')(sizes)
 
 def build_forward():
@@ -138,7 +138,7 @@ def build_src(name: str, forward_args: str, param_node, class_defined: list, for
     foward_template = '''def forward_(self, {}):
         {}
     '''
-    return '''import torch\nimport torch.utils.checkpoint\n
+    return '''import torch\nimport torch.utils.checkpoint\nimport random\n
 class {}(torch.nn.Module):
     {}
     {}
