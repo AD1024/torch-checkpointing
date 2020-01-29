@@ -6,11 +6,14 @@ from .utils import to_pyid, validate_indice
 
 
 def make_function(func_name, params, body):
+    process_id = lambda name: name.replace('[', '_').replace(']', '') \
+                           if name.startswith('input') else name
     result = \
 '''def {}(self, {}):
         {}
 '''
-    return result.format(func_name, ", ".join(params), ("\n" + 8 * " ").join(body))
+    return result.format(func_name, ", ".join(map(process_id, params)),\
+                        ("\n" + 8 * " ").join(map(process_id, body)))
 
 def make_torch_checkpoint_call(func_name, params):
     return f'torch.utils.checkpoint.checkpoint({func_name}, {", ".join(params)})'
