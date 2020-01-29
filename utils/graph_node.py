@@ -114,7 +114,7 @@ class PrimNode(Node):
             # is defined in the context
             if all((ctx.get(i, None) is not None for i in input_vars)):
                 if inline:
-                    ctx[out_var] = list(ctx.get(ctx[i], ctx[i]) for i in input_vars)
+                    ctx[out_var] = f'[ {", ".join((ctx.get(ctx[i], ctx[i]) for i in input_vars))} ]'
                     return None
                 inputs = [ctx[i] for i in input_vars]
                 return ParsedCode(code=f'{out_var} = [{", ".join(inputs)}]',\

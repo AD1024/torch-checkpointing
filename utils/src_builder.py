@@ -95,7 +95,7 @@ def checkpointing(parsed_code: list, checkpoints: list, output_var: str) -> str:
         if head != tail - 1:
             func_name = next(name_iter)
             body = []  # the lifted lambda body
-            referred = set()             # variables got referred later in the context (should not be lifted)
+            referred = set([parsed_code[tail - 1].output_var])             # variables got referred later in the context (should not be lifted)
             for i in range(head + 1, tail):
                 body.append(parsed_code[i].code)
                 # if the output later is referred
