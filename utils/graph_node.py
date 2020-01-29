@@ -2,7 +2,7 @@ import torch
 import torchvision
 from collections import namedtuple
 from .utils import to_pyid, make_func_call, to_camel_cases
-from functools import reduce
+from functools import reduce, partial
 
 
 SIZE_FLOAT = 4
@@ -20,9 +20,12 @@ calc_dict = { # dict for tensors
              'float': lambda size: SIZE_FLOAT * size,
              'bool' : lambda size: SIZE_BOOL  * size,
              'int[]'    : lambda size: SIZE_INT * size,
-             'Tensor[]' : lambda sizes: sum(map(sum, sizes))}
+             'Tensor[]' : lambda sizes: sum(map(partial(reduce, lambda x, y: x * y), sizes))}
 
 def list_params_to_code(params: list):
+    '''
+        Convert a list to source code
+    '''
     result = '['
     for param in params:
         if isinstance(param, list):
@@ -109,9 +112,8 @@ class PrimNode(Node):
         self.value = value
     
     def get_output_size(self):
-        if self.output_size is not None:
-            return self.output_size
-        self.output_size = sum([calc_dict[value.type](value.sizes) for value in self.value.values()])
+        if self.output_size is None:
+            self.output_size = sum([calc_dict[value.type](value.sizes) for value in self.value.values()])
         return self.output_size
     
     def to_python(self, ctx: dict, src=False, inline=True):
@@ -121,6 +123,7 @@ class PrimNode(Node):
         ctx.update({ self.outputs[0] : out_var })
         if op_name == 'Constant':
             output = self.value[self.outputs[0]].value
+
             if not src:
                 return output
             if inline:
@@ -129,16 +132,20 @@ class PrimNode(Node):
                 return None
             return ParsedCode(code=f'{out_var} = {output}', func=None,\
                               args=output, node_id=self.id, output_var=out_var)
+
         elif op_name == 'ListConstruct':
             input_vars = self.inputs
             if not src:
                 return list
+
             # Ensures the identifiers referred in the current call
             # is defined in the context
             if all((ctx.get(i, None) is not None for i in input_vars)):
+
                 if inline:
                     ctx[out_var] = list((ctx.get(ctx[i], ctx[i]) for i in input_vars))
                     return None
+                
                 inputs = [ctx[i] for i in input_vars]
                 return ParsedCode(code=f'{out_var} = [{", ".join(inputs)}]',\
                                   func='list',\
@@ -164,10 +171,9 @@ class AtenNode(Node):
         }
 
     def get_output_size(self):
-        if self.output_size is not None:
-            return self.output_size
-        self.output_size = sum([calc_dict[shape.type](reduce(lambda x, y: x * y, shape.sizes))\
-                                                        for shape in self.shape.values()])
+        if self.output_size is None:
+            self.output_size = sum([calc_dict[shape.type](reduce(lambda x, y: x * y, shape.sizes))\
+                                                            for shape in self.shape.values()])
         return self.output_size
     
     def to_python(self, ctx: dict, src=False, inline=True):
@@ -195,6 +201,7 @@ class AtenNode(Node):
                     func_args = [ctx.get(ctx.get(x), ctx.get(x)) for x in input_vars]
                 else:
                     func_args = [ctx.get(ctx.get(x)) for x in input_vars]
+
                 # Parameters to the function might be changed since
                 # there may be variables in list, which will cause the code gen
                 # to generate a new name for the list in a lifted function
@@ -202,6 +209,7 @@ class AtenNode(Node):
                     processed_arg = map(lambda x: list_params_to_code(x) if isinstance(x, list) else str(x), func_args)
                     rhs = self.func_call_rules.get(func, make_func_call)(func, *processed_arg)
                     return f'{out_var} = {rhs}'
+
                 return ParsedCode(code=func_call, func=func, args=func_args,\
                                   node_id=self.id, output_var=out_var)
             else:

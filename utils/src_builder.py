@@ -7,6 +7,16 @@ from itertools import count
 
 
 def process_parameters(params: list, process_id) -> list:
+    '''
+        Functionally processing parameters using a given function
+
+        :params:
+            params          the list of parameters
+            process_id      the parameter processing function
+        
+        :returns:
+            A new list containing processed parameters
+    '''
     if params == []:
         return []
     else:
@@ -17,6 +27,7 @@ def process_parameters(params: list, process_id) -> list:
             return [ process_id(x) ] + process_parameters(xs, process_id)
 
 def make_function(func_name, params, body):
+    # ad hoc input parameter renaming
     process_id = lambda name: name.replace('[', '_').replace(']', '') \
                            if isinstance(name, str) and name.startswith('input') else name
     
@@ -140,15 +151,19 @@ def checkpointing(parsed_code: list, checkpoints: list, output_var: str) -> str:
         while head >= 0 and parsed_code[head].node_id not in checkpoints:
             head -= 1
         # The adjacent precedence of the last checkpoint is not a checkpoint
+        # then lift the segment to a closure
         if head != tail - 1:
             func_name = next(name_iter)
             body = []  # the lifted lambda body
             referred = set()             # variables got referred later in the context (should not be lifted)
+
             for i in range(head + 1, tail):
                 body.append(parsed_code[i])
                 # if the output later is referred
                 if parsed_code[i].output_var in local_refs:
                     referred.add(parsed_code[i].output_var)
+
+            # Free variables should be included in the parameters
             args_after_lift = free_variables(head + 1, tail - 1, parsed_code)
             body.append(f'return {", ".join(referred)}')  # return the variables that are referred later
             declared_code.append(make_function(func_name, args_after_lift, body))
@@ -163,6 +178,15 @@ def checkpointing(parsed_code: list, checkpoints: list, output_var: str) -> str:
 
 
 def weight_gen(v_to_shape):
+    '''
+        Generate random weight according to the shape of inputs
+
+        :params:
+            v_to_shape      (Node * Shape)
+        
+        :returns:
+            python code that assigns random weights
+    '''
     shape = v_to_shape[1]
     weight_type = shape.type
     sizes = shape.sizes
@@ -172,6 +196,9 @@ def weight_gen(v_to_shape):
     }.get(weight_type, lambda x: '0')(sizes)
 
 def build_forward():
+    '''
+        String constant. Wrapper for self.forward_
+    '''
     result = \
 '''def forward(self, inputs):
         return self.forward_([ inputs ] + self.weights)
@@ -179,6 +206,12 @@ def build_forward():
     return result
 
 def build_init_weight(param_node):
+    '''
+        Weight initialization code
+
+        :params:
+            param_node      the parameter node of the computation graph
+    '''
     result = \
 '''def __init__(self):
         self.weights = [{}]
@@ -186,6 +219,18 @@ def build_init_weight(param_node):
     return result
 
 def build_src(name: str, param_node, class_defined: list, forward_pass: list):
+    '''
+        Build the source code for a Module
+
+        :params:
+            name            the name of the module
+            param_node      the parameter node of the computation graph
+            class_defined   defined closures of lifted codes in forward
+            forward_pass    actual codes in self.forward_
+        
+        :returns:
+            Python source code of a checkpointed module
+    '''
     foward_template = '''def forward_(self, {}):
         {}
     '''
@@ -210,7 +255,9 @@ def to_python_src(module_name: str, params: Node, start: Node, graph: dict, chec
             checkpoints:    node id that are marked as checkpoints
     '''
     cid = count(0)
+    # Make sure the input variables are in the right places
     outputs = sorted(params.outputs)
+    # Assign positions in the list
     env = dict(((k, v) for k, v in zip(outputs, map(lambda name: f'input_vars[{next(cid)}]', outputs))))
     lines = []
     nodes = list(graph.values())
