@@ -9,6 +9,7 @@ SIZE_FLOAT = 4
 SIZE_INT = 4
 SIZE_LONG  = 8
 SIZE_NONE  = 1
+SIZE_BOOL  = 1
 
 calc_dict = { # dict for tensors
              'Long' : lambda size: SIZE_LONG  * size,
