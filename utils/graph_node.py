@@ -22,9 +22,32 @@ calc_dict = { # dict for tensors
              'int[]'    : lambda size: SIZE_INT * size,
              'Tensor[]' : lambda sizes: sum(map(sum, sizes))}
 
+def list_params_to_code(params: list):
+    result = '['
+    for param in params:
+        if isinstance(param, list):
+            result += list_params_to_code(param)
+        else:
+            result += str(param)
+        result += ', '
+    return result + ']'
+
 # Store the function / operator and its argument to
 # convert the procedure to a checkpointed procedure
-ParsedCode = namedtuple('ParsedCode', ['code', 'func', 'args', 'node_id', 'output_var'])
+# ParsedCode = namedtuple('ParsedCode', ' '.join(['code', 'func', 'args', 'node_id', 'output_var']))
+class ParsedCode:
+    def __init__(self, code=None, func=None, args=None, node_id=None, output_var=None):
+        self.code = code
+        self.func = func
+        self.args = args
+        self.node_id = node_id
+        self.output_var = output_var
+    
+    def __repr__(self):
+        return f'{self.func} accepts {self.args}'
+    
+    def __str__(self):
+        return self.__repr__()
 
 class Node:
     '''
@@ -114,7 +137,7 @@ class PrimNode(Node):
             # is defined in the context
             if all((ctx.get(i, None) is not None for i in input_vars)):
                 if inline:
-                    ctx[out_var] = f'[ {", ".join((ctx.get(ctx[i], ctx[i]) for i in input_vars))} ]'
+                    ctx[out_var] = list((ctx.get(ctx[i], ctx[i]) for i in input_vars))
                     return None
                 inputs = [ctx[i] for i in input_vars]
                 return ParsedCode(code=f'{out_var} = [{", ".join(inputs)}]',\
@@ -134,6 +157,7 @@ class AtenNode(Node):
     def __init__(self, name, op, params, shape, inputs, outputs):
         super().__init__(name, op, params, shape, inputs, outputs)
         self.func_call_rules = {
+            'torch.nn.AvgPool2d'        : lambda func_name, *params: f'{func_name}({", ".join(params[1:])})({params[0]})',
             'torch.nn.AdaptiveAvgPool2d': lambda func_name, *params: f'{func_name}({params[1]})({params[0]})',
             'torch.addmm'               : lambda func_name, *params: f'{func_name}({", ".join(params[:-2])}, beta={params[-2]}, alpha={params[-1]})',
             'torch.add'                 : lambda func_name, *params: f'{func_name}({", ".join(params[:-1])}, alpha={params[-1]})'
@@ -171,8 +195,14 @@ class AtenNode(Node):
                     func_args = [ctx.get(ctx.get(x), ctx.get(x)) for x in input_vars]
                 else:
                     func_args = [ctx.get(ctx.get(x)) for x in input_vars]
-                func_call = self.func_call_rules.get(func, make_func_call)(func, *func_args)
-                return ParsedCode(code=f'{out_var} = {func_call}', func=func, args=func_args,\
+                # Parameters to the function might be changed since
+                # there may be variables in list, which will cause the code gen
+                # to generate a new name for the list in a lifted function
+                def func_call(func_name=func, func_args=func_args):
+                    processed_arg = map(lambda x: list_params_to_code(x) if isinstance(x, list) else str(x), func_args)
+                    rhs = self.func_call_rules.get(func, make_func_call)(func, *processed_arg)
+                    return f'{out_var} = {rhs}'
+                return ParsedCode(code=func_call, func=func, args=func_args,\
                                   node_id=self.id, output_var=out_var)
             else:
                 raise Exception(f'{", ".join((str(x) for x in filter(lambda x: ctx.get(x, None) is None, input_vars)))}' \

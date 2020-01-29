@@ -1,22 +1,43 @@
 import torch
 import torch.jit
 import random
-from .graph_node import Node
+from .graph_node import Node, ParsedCode
 from .utils import to_pyid, validate_indice
+from itertools import count
 
+
+def process_parameters(params: list, process_id) -> list:
+    if params == []:
+        return []
+    else:
+        x, *xs = params
+        if isinstance(x, list):
+            return [ [ process_parameters(c, process_id) if isinstance(c, list) else process_id(c) for c in x ] ] + process_parameters(xs, process_id)
+        else:
+            return [ process_id(x) ] + process_parameters(xs, process_id)
 
 def make_function(func_name, params, body):
     process_id = lambda name: name.replace('[', '_').replace(']', '') \
-                           if name.startswith('input') else name
+                           if isinstance(name, str) and name.startswith('input') else name
+    
+    for i in range(0, len(body)):
+        if isinstance(body[i], ParsedCode):
+            body[i].args = process_parameters(body[i].args, process_id)
+
     result = \
 '''def {}(self, {}):
         {}
 '''
     return result.format(func_name, ", ".join(map(process_id, params)),\
-                        ("\n" + 8 * " ").join(map(process_id, body)))
+                        ("\n" + 8 * " ").join((x.code(func_args=x.args) if isinstance(x, ParsedCode) else x for x in body)))
 
 def make_torch_checkpoint_call(func_name, params):
     return f'torch.utils.checkpoint.checkpoint({func_name}, {", ".join(params)})'
+
+def variable_in_list(xs: list):
+    if isinstance(xs, list):
+        return list(filter(lambda x: isinstance(x, str), xs))
+    return []
 
 @validate_indice
 def local_variables(start: int, end: int, parsed_code: list) -> set:
@@ -43,8 +64,35 @@ def free_variables(start: int, end: int, parsed_code: list, local_vars=None) -> 
         local_ref = local_variables(start, end, parsed_code)
     free_vars  = set()
     for i in range(start, end + 1):
-        free_vars = free_vars.union(set(filter(lambda x: isinstance(x, str) and x not in local_ref, parsed_code[i].args)))
+        for arg in parsed_code[i].args:
+            if isinstance(arg, str) and arg not in local_ref:
+                free_vars.add(arg)
+            elif isinstance(arg, list):
+                free_vars = free_vars.union(set(filter(lambda x: x not in local_ref, variable_in_list(arg))))
     return free_vars
+
+@validate_indice
+def referred_variables(start: int, end: int, parsed_code: list):
+    '''
+        Get variables that are used as inputs
+
+        :params:
+            start         the start index of lifting
+            end           the end index of lifting
+            parsed_code   ParsedCode objects that are sorted in
+                          topological order with respect to the original node
+        
+        :returns:
+            a set of referred variable names
+    '''
+    result = set()
+    for i in range(start, end + 1):
+        for arg in parsed_code[i].args:
+            if isinstance(arg, str):
+                result.add(arg)
+            elif isinstance(arg, list):
+                result = result.union(set(variable_in_list(arg)))
+    return result
 
 def checkpointing(parsed_code: list, checkpoints: list, output_var: str) -> str:
     '''
@@ -72,22 +120,22 @@ def checkpointing(parsed_code: list, checkpoints: list, output_var: str) -> str:
     # Process the trailing segment (the last checkpoint to the end of the graph)
     head = tail
     while head >= 0 and parsed_code[head].node_id not in checkpoints:
-        local_code = cons(parsed_code[head].code, local_code)
+        local_code = cons(parsed_code[head].code(), local_code)
         head -= 1
     # Get the local refs of trailing segment
     if head >= 0:
-        local_refs = local_variables(head, tail, parsed_code)
+        local_refs = referred_variables(head, tail, parsed_code)
     else:
         # Not a valid plan
         return {
             'class_declared': [],
-            'forward_local' : [x.code for x in parsed_code] + [ f'return {output_var}' ]
+            'forward_local' : [x.code() for x in parsed_code] + [ f'return {output_var}' ]
         }
     tail = head
     while tail >= 0:
         # Ensures: tail points either 0, -1 or a checkpoint
-        local_code = cons(parsed_code[tail].code, local_code)
-        local_refs  = local_refs.union(set(filter(lambda x: isinstance(x, str), parsed_code[tail].args)))
+        local_code = cons(parsed_code[tail].code(), local_code)
+        local_refs  = local_refs.union(referred_variables(tail, tail, parsed_code))
         head = tail - 1
         while head >= 0 and parsed_code[head].node_id not in checkpoints:
             head -= 1
@@ -95,9 +143,9 @@ def checkpointing(parsed_code: list, checkpoints: list, output_var: str) -> str:
         if head != tail - 1:
             func_name = next(name_iter)
             body = []  # the lifted lambda body
-            referred = set([parsed_code[tail - 1].output_var])             # variables got referred later in the context (should not be lifted)
+            referred = set()             # variables got referred later in the context (should not be lifted)
             for i in range(head + 1, tail):
-                body.append(parsed_code[i].code)
+                body.append(parsed_code[i])
                 # if the output later is referred
                 if parsed_code[i].output_var in local_refs:
                     referred.add(parsed_code[i].output_var)
@@ -161,7 +209,9 @@ def to_python_src(module_name: str, params: Node, start: Node, graph: dict, chec
             graph :         a string->Node map represents the nodes in the graph
             checkpoints:    node id that are marked as checkpoints
     '''
-    env = dict(((k, v) for k, v in zip(params.outputs, map(lambda name: f'input_vars[{name}]', params.outputs))))
+    cid = count(0)
+    outputs = sorted(params.outputs)
+    env = dict(((k, v) for k, v in zip(outputs, map(lambda name: f'input_vars[{next(cid)}]', outputs))))
     lines = []
     nodes = list(graph.values())
     nodes.sort(key=lambda node: node.outputs[0])
