@@ -32,7 +32,7 @@ def get_value(node, tensor_sizes) -> dict:
         typeIs = o.type().str()
         value  = o.toIValue()
         if typeIs == 'Tensor[]':
-            sizes = tuple((tensor_sizes[i.unique()] for i in o.inputs()))
+            sizes = tuple((tensor_sizes[i.unique()] for i in node.inputs()))
             outputs[o.unique()] = Value(type=typeIs, value=value, sizes=sizes)
         else:
             outputs[o.unique()] = Value(type=typeIs, value=value,\
