@@ -78,7 +78,7 @@ def parse_to_graph(model, args):
     parsed_param_node = Node(create_name(param_node), param_node.kind(),\
                              None, param_shape, None, param_outputs)
     for node in graph.nodes():
-        op = node.kind();
+        op = node.kind()
         params = dict([(i, node[i]) for i in node.attributeNames()]) if hasattr(node, '__getitem__') else None
         outputs = [o.unique() for o in node.outputs()]
         inputs  = [i.unique() for i in node.inputs()]
