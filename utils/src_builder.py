@@ -1,10 +1,16 @@
 import torch
 import torch.jit
 import random
-from .graph_node import Node, ParsedCode
-from .utils import to_pyid, validate_indice
+import hashlib
+from .graph_node import Node, ParsedCode, module_params, module_accepts
+from .utils import to_pyid, validate_indice, make_func_call
 from itertools import count
 
+# ad hoc parameter renaming
+process_id = lambda name: name.replace('[', '_').replace(']', '') \
+                           if isinstance(name, str) and name.startswith('input') else name
+
+clone_variable = lambda name: f'{name}.clone()' if isinstance(name, str) else name
 
 def process_parameters(params: list, process_id) -> list:
     '''
@@ -27,20 +33,12 @@ def process_parameters(params: list, process_id) -> list:
             return [ process_id(x) ] + process_parameters(xs, process_id)
 
 def make_function(func_name, params, body):
-    # ad hoc input parameter renaming
-    process_id = lambda name: name.replace('[', '_').replace(']', '') \
-                           if isinstance(name, str) and name.startswith('input') else name
-    
-    for i in range(0, len(body)):
-        if isinstance(body[i], ParsedCode):
-            body[i].args = process_parameters(body[i].args, process_id)
-
     result = \
 '''def {}(self, {}):
         {}
 '''
     return result.format(func_name, ", ".join(map(process_id, params)),\
-                        ("\n" + 8 * " ").join((x.code(func_args=x.args) if isinstance(x, ParsedCode) else x for x in body)))
+                        ("\n" + 8 * " ").join(body))
 
 def make_torch_checkpoint_call(func_name, params):
     return f'torch.utils.checkpoint.checkpoint({func_name}, {", ".join(params)})'
@@ -118,34 +116,76 @@ def checkpointing(parsed_code: list, checkpoints: list, output_var: str) -> str:
             An executable python code that represents the checkpointed model
     '''
     def func_name_generator():
-        cnt = 0
+        cnt = count(0)
         while True:
-            yield f'jojo_{cnt}'
-            cnt += 1
+            yield f'jojo_{next(cnt)}'
+    
+    def module_name_generator():
+        cnt = count(0)
+        while True:
+            yield f'layer_{next(cnt)}'
+    
+    def hash_module(func_name, params):
+        return hashlib.md5((func_name + str(params)).encode()).hexdigest()
+
     name_iter = func_name_generator()
+    module_name_iter = module_name_generator()
 
     local_code = []
     declared_code = []
+    modules_code = []
+    module_name_map = dict()
+
+    def lift_module(code: ParsedCode, args=None, clone_args=False):
+        if not args:
+            args = code.args
+        if clone_args:
+            args = process_parameters(args, clone_variable)
+        if code.func.startswith('torch.nn'):
+            constructor_params_getter = module_params.get(code.func, None)
+            accept_params_getter      = module_accepts.get(code.func, None)
+            if constructor_params_getter and accept_params_getter:
+                constr_params = constructor_params_getter(args)
+                accept_param  = accept_params_getter(args)
+                module_id     = hash_module(code.func, constr_params)
+
+                # Ensures no two identical layers are created
+                if module_id not in module_name_map.keys():
+                    module_name = next(module_name_iter)
+                    module_name_map[module_id] = module_name
+                    modules_code.append(f'self.{module_name} = {make_func_call(code.func, *constr_params)}')
+                else:
+                    module_name = module_name_map[module_id]
+
+                rhs = make_func_call(f'self.{module_name}', *accept_param)
+                return f'{code.output_var} = {rhs}'
+            else:
+                raise Exception(f'{code.func} not supported.')
+        else:
+            return code.code(func_args=args)
+
     cons = lambda elem, xs: [ elem ] + xs
     tail = len(parsed_code) - 1
     # Process the trailing segment (the last checkpoint to the end of the graph)
     head = tail
     while head >= 0 and parsed_code[head].node_id not in checkpoints:
-        local_code = cons(parsed_code[head].code(), local_code)
+        local_code = cons(lift_module(parsed_code[head]), local_code)
         head -= 1
     # Get the local refs of trailing segment
     if head >= 0:
         local_refs = referred_variables(head, tail, parsed_code)
     else:
         # Not a valid plan
+        # local_code = [ lift_module(x) for x in parsed_code ] + [ f'return {output_var}' ]
         return {
+            'modules'       : modules_code,
             'class_declared': [],
-            'forward_local' : [x.code() for x in parsed_code] + [ f'return {output_var}' ]
+            'forward_local' : local_code + [ f'return {output_var}' ]
         }
     tail = head
     while tail >= 0:
         # Ensures: tail points either 0, -1 or a checkpoint
-        local_code = cons(parsed_code[tail].code(), local_code)
+        local_code = cons(lift_module(parsed_code[tail]), local_code)
         local_refs  = local_refs.union(referred_variables(tail, tail, parsed_code))
         head = tail - 1
         while head >= 0 and parsed_code[head].node_id not in checkpoints:
@@ -155,6 +195,7 @@ def checkpointing(parsed_code: list, checkpoints: list, output_var: str) -> str:
         if head != tail - 1:
             func_name = next(name_iter)
             body = []  # the lifted lambda body
+            body_code = []
             referred = set()             # variables got referred later in the context (should not be lifted)
 
             for i in range(head + 1, tail):
@@ -163,15 +204,23 @@ def checkpointing(parsed_code: list, checkpoints: list, output_var: str) -> str:
                 if parsed_code[i].output_var in local_refs:
                     referred.add(parsed_code[i].output_var)
 
+            body.append(f'return {", ".join(referred)}')  # return the variables that are referred later
+
+            for line in body:
+                if isinstance(line, ParsedCode):
+                    body_code.append(lift_module(line, args=process_parameters(line.args, process_id), clone_args=len(body_code) == 0 and line.func.endswith('_')))
+                else:
+                    body_code.append(str(line))
+
             # Free variables should be included in the parameters
             args_after_lift = free_variables(head + 1, tail - 1, parsed_code)
-            body.append(f'return {", ".join(referred)}')  # return the variables that are referred later
-            declared_code.append(make_function(func_name, args_after_lift, body))
+            declared_code.append(make_function(func_name, args_after_lift, body_code))
             local_code = cons(f'{", ".join(referred)} = {make_torch_checkpoint_call(f"self.{func_name}", args_after_lift)}', local_code)
             local_refs = local_refs.union(args_after_lift)
         tail = head
     local_code.append(f'return {output_var}')
     return {
+        'modules'      :  modules_code,
         'forward_local':  local_code,
         'class_declared': declared_code
     }
@@ -201,11 +250,11 @@ def build_forward():
     '''
     result = \
 '''def forward(self, inputs):
-        return self.forward_([ inputs ] + self.weights)
+        return self.forward_([ inputs.requires_grad_(True) ] + self.weights)
 '''
     return result
 
-def build_init_weight(param_node):
+def build_init(param_node, modules):
     '''
         Weight initialization code
 
@@ -214,11 +263,13 @@ def build_init_weight(param_node):
     '''
     result = \
 '''def __init__(self):
+        super().__init__()
         self.weights = [{}]
-'''.format(', '.join(map(weight_gen, sorted(param_node.shape.items())[1:])))
+        {}
+'''.format(', '.join(map(weight_gen, sorted(param_node.shape.items())[1:])), '\n        '.join(modules))
     return result
 
-def build_src(name: str, param_node, class_defined: list, forward_pass: list):
+def build_src(name: str, param_node, modules: list, class_defined: list, forward_pass: list):
     '''
         Build the source code for a Module
 
@@ -239,7 +290,7 @@ class {}(torch.nn.Module):
     {}
     {}
     {}
-    {}'''.format(name, build_init_weight(param_node),\
+    {}'''.format(name, build_init(param_node, modules),\
                         "\n    ".join(map(lambda x: f'{x}', class_defined)),\
                         foward_template.format("input_vars", ("\n" + 8 * " ").join(forward_pass)),\
                         build_forward())
@@ -267,5 +318,7 @@ def to_python_src(module_name: str, params: Node, start: Node, graph: dict, chec
         if new_line:
             lines.append(new_line)
     result_checkpoint = checkpointing(lines, checkpoints, lines[-1].output_var)
-    return build_src(module_name, params, result_checkpoint['class_declared'],\
+    return build_src(module_name, params,\
+                     result_checkpoint['modules'],\
+                     result_checkpoint['class_declared'],\
                      result_checkpoint['forward_local'])

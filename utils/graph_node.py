@@ -22,6 +22,18 @@ calc_dict = { # dict for tensors
              'int[]'    : lambda size: SIZE_INT * size,
              'Tensor[]' : lambda sizes: sum(map(partial(reduce, lambda x, y: x * y), sizes))}
 
+# Specify parameters used to construct a layer
+module_params = {
+    'torch.nn.AdaptiveAvgPool2d' : lambda params: [ params[1] ],
+    'torch.nn.AvgPool2d'         : lambda params: params[1:]
+}
+
+# Specify what the constructed layer should accept in forward pass
+module_accepts = {
+    'torch.nn.AdaptiveAvgPool2d' : lambda params: [ params[0] ],
+    'torch.nn.AvgPool2d'         : lambda params: [ params[0] ],
+}
+
 def list_params_to_code(params: list):
     '''
         Convert a list to source code
@@ -164,8 +176,8 @@ class AtenNode(Node):
     def __init__(self, name, op, params, shape, inputs, outputs):
         super().__init__(name, op, params, shape, inputs, outputs)
         self.func_call_rules = {
-            'torch.nn.AvgPool2d'        : lambda func_name, *params: f'{func_name}({", ".join(params[1:])})({params[0]})',
-            'torch.nn.AdaptiveAvgPool2d': lambda func_name, *params: f'{func_name}({params[1]})({params[0]})',
+            'torch.nn.AvgPool2d'        : lambda func_name, *params: f'self.{func_name}({", ".join(params[1:])})({params[0]})',
+            'torch.nn.AdaptiveAvgPool2d': lambda func_name, *params: f'self.{func_name}({params[1]})({params[0]})',
             'torch.addmm'               : lambda func_name, *params: f'{func_name}({", ".join(params[:-2])}, beta={params[-2]}, alpha={params[-1]})',
             'torch.add'                 : lambda func_name, *params: f'{func_name}({", ".join(params[:-1])}, alpha={params[-1]})'
         }
